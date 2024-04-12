@@ -1,0 +1,6 @@
+llama_index
+beautifulsoup4
+markdown
+llama-index-embeddings-huggingface
+llama-index-llms-llama-cpp
+# CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir
