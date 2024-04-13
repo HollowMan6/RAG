@@ -37,7 +37,9 @@ def construct_index(md_dir_path, html_dir_path):
 
     components.vector_store.add(results)
 
-    index = VectorStoreIndex.from_vector_store(components.vector_store)
+    index = VectorStoreIndex.from_vector_store(
+        components.vector_store, embed_model=components.embed_model
+    )
 
     return index
 
