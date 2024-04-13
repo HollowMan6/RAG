@@ -6,37 +6,13 @@ from llama_index.core.vector_stores import (
 )
 from llama_index.core.schema import BaseNode
 
-from typing import Tuple, List, Any, Dict, cast
 import numpy as np
+import jax.numpy as jnp
+from jax import jit, vmap
 
-
-def filter_nodes(nodes: List[BaseNode], filters: MetadataFilters):
-    filtered_nodes = []
-    for node in nodes:
-        matches = True
-        for f in filters.filters:
-            if f.key not in node.metadata:
-                matches = False
-                continue
-            if f.value != node.metadata[f.key]:
-                matches = False
-                continue
-        if matches:
-            filtered_nodes.append(node)
-    return filtered_nodes
-
-
-def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
-    """Dense search."""
-    query_embedding = cast(List[float], query.query_embedding)
-    doc_embeddings = [n.embedding for n in nodes]
-    doc_ids = [n.node_id for n in nodes]
-    return get_top_k_embeddings(
-        query_embedding,
-        doc_embeddings,
-        doc_ids,
-        similarity_top_k=query.similarity_top_k,
-    )
+from typing import Tuple, List, Any, Dict, cast
+from timeit import default_timer as timer
+import logging
 
 
 def get_top_k_embeddings(
@@ -69,6 +45,97 @@ def get_top_k_embeddings(
     result_similarities = [s for s, _ in sorted_tups]
     result_ids = [n for _, n in sorted_tups]
     return result_similarities, result_ids
+
+
+@jit
+def get_top_k_jit(
+    query_embedding: List[float],
+    doc_embeddings: List[List[float]],
+):
+    """Get top nodes by similarity to the query."""
+    # Convert input lists to JAX arrays
+    # dimensions: D
+    qembed_jax = jnp.array(query_embedding)
+    # dimensions: N x D
+    dembed_jax = jnp.array(doc_embeddings)
+
+    # Define a function for computing cosine similarity
+    @vmap
+    def cosine_similarity(dembed):
+        # Compute dot product and norms
+        # dimensions: N
+        dproduct = jnp.dot(dembed, qembed_jax)
+        # dimensions: N
+        norm = jnp.linalg.norm(qembed_jax) * jnp.linalg.norm(dembed)
+        return dproduct / norm
+
+    # Vectorize the cosine_similarity function to handle multiple document embeddings
+    # Compute cosine similarities for all document embeddings
+    cos_sim_arr = cosine_similarity(dembed_jax)
+
+    # now we have the N cosine similarities for each document
+    # sort by cosine similarity
+    sorted_indices = jnp.argsort(cos_sim_arr)[::-1]
+
+    return sorted_indices, cos_sim_arr
+
+
+def get_top_k_embeddings_accelerated(
+    query_embedding: List[float],
+    doc_embeddings: List[List[float]],
+    doc_ids: List[str],
+    similarity_top_k: int = 5,
+) -> Tuple[List[float], List[str]]:
+    # Compile the function with JIT for performance optimization
+
+    sorted_indices, cos_sim_arr = get_top_k_jit(query_embedding, doc_embeddings)
+    top_k_indices = sorted_indices[:similarity_top_k]
+    result_ids = [doc_ids[i] for i in top_k_indices.tolist()]
+
+    return cos_sim_arr[top_k_indices].tolist(), result_ids
+
+
+def filter_nodes(nodes: List[BaseNode], filters: MetadataFilters):
+    filtered_nodes = []
+    for node in nodes:
+        matches = True
+        for f in filters.filters:
+            if f.key not in node.metadata:
+                matches = False
+                continue
+            if f.value != node.metadata[f.key]:
+                matches = False
+                continue
+        if matches:
+            filtered_nodes.append(node)
+    return filtered_nodes
+
+
+def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
+    """Dense search."""
+    query_embedding = cast(List[float], query.query_embedding)
+    doc_embeddings = [n.embedding for n in nodes]
+    doc_ids = [n.node_id for n in nodes]
+    start = timer()
+    get_top_k_embeddings(
+        query_embedding,
+        doc_embeddings,
+        doc_ids,
+        similarity_top_k=query.similarity_top_k,
+    )
+    end = timer()
+    print(f"Execution time for normal one is {end - start} seconds")
+    start = timer()
+    result = get_top_k_embeddings_accelerated(
+        query_embedding,
+        doc_embeddings,
+        doc_ids,
+        similarity_top_k=query.similarity_top_k,
+    )
+    end = timer()
+    print(f"Execution time for jax accelerated one is {end - start} seconds")
+
+    return result
 
 
 class MemoryVectorStore(VectorStore):

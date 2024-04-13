@@ -16,7 +16,7 @@ llm = LlamaCPP(
     generate_kwargs={},
     # kwargs to pass to __init__()
     # set to at least 1 to use GPU
-    model_kwargs={"n_gpu_layers": 16},
+    model_kwargs={"n_gpu_layers": 1},
     verbose=True,
 )
 

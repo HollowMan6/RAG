@@ -4,3 +4,4 @@ markdown
 llama-index-embeddings-huggingface
 llama-index-llms-llama-cpp
 # CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python --upgrade --force-reinstall --no-cache-dir
+# pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
