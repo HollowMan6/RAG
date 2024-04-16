@@ -5,6 +5,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.indices.utils import embed_nodes
 
 import logging
+from timeit import default_timer as timer
 
 import parsing
 import components
@@ -26,6 +27,7 @@ def construct_index(md_dir_path, html_dir_path):
         )
     )
 
+    start = timer()
     id_to_embed_map = embed_nodes(nodes, components.embed_model, show_progress=True)
 
     results = []
@@ -34,8 +36,13 @@ def construct_index(md_dir_path, html_dir_path):
         result = node.copy()
         result.embedding = embedding
         results.append(result)
+    end = timer()
+    logging.info(f"Embedding generation time: {end - start}s")
 
+    start = timer()
     components.vector_store.add(results)
+    end = timer()
+    logging.info(f"Vector store add time: {end - start}s")
 
     index = VectorStoreIndex.from_vector_store(
         components.vector_store, embed_model=components.embed_model
@@ -90,7 +97,7 @@ Answer: \
 
             print("\033[0m")
 
-            logging.debug(f"*****Formatted Prompt*****:\n{fmt_qa_prompt}\n\n")
+            # logging.debug(f"*****Formatted Prompt*****:\n{fmt_qa_prompt}\n\n")
 
     except KeyboardInterrupt:
         print("\nBye!")

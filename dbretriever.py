@@ -5,7 +5,7 @@ from llama_index.core.vector_stores import VectorStoreQuery
 
 from typing import List, Optional
 import logging
-
+from timeit import default_timer as timer
 
 class VectorDBRetriever(BaseRetriever):
     """Retriever over a vector store."""
@@ -26,7 +26,11 @@ class VectorDBRetriever(BaseRetriever):
 
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
         """Retrieve."""
+        start = timer()
         query_embedding = self._embed_model.get_query_embedding(query_bundle.query_str)
+        end = timer()
+        logging.info(f"Query embedding generation time: {end - start}s")
+
         vector_store_query = VectorStoreQuery(
             query_embedding=query_embedding,
             similarity_top_k=self._similarity_top_k,
@@ -34,13 +38,13 @@ class VectorDBRetriever(BaseRetriever):
         )
         query_result = self._vector_store.query(vector_store_query)
 
-        for similarity, node in zip(query_result.similarities, query_result.nodes):
-            logging.info(
-                "\n----------------\n"
-                f"[Node ID {node.node_id}] Similarity: {similarity}\n\n"
-                f"{node.get_content(metadata_mode='all')}"
-                "\n----------------\n\n"
-            )
+        # for similarity, node in zip(query_result.similarities, query_result.nodes):
+        #     logging.info(
+        #         "\n----------------\n"
+        #         f"[Node ID {node.node_id}] Similarity: {similarity}\n\n"
+        #         f"{node.get_content(metadata_mode='all')}"
+        #         "\n----------------\n\n"
+        #     )
 
         nodes_with_scores = []
         for index, node in enumerate(query_result.nodes):

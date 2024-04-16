@@ -157,7 +157,7 @@ def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
         similarity_top_k=query.similarity_top_k,
     )
     end = timer()
-    print(f"Execution time for normal one is {end - start} seconds")
+    print(f"get_top_k_embeddings, CPU: {end - start}s")
     # start = timer()
     # result = get_top_k_embeddings_accelerated(
     #     query_embedding,
@@ -175,7 +175,7 @@ def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
         similarity_top_k=query.similarity_top_k,
     )
     end = timer()
-    print(f"Execution time for GPU accelerated one is {end - start} seconds")
+    print(f"get_top_k_embeddings, GPU: {end - start}s")
     return result
 
 
