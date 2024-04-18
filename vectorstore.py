@@ -5,15 +5,23 @@ from llama_index.core.vector_stores import (
     MetadataFilters,
 )
 from llama_index.core.schema import BaseNode
+from pylibraft.common import DeviceResources
+from pylibraft.neighbors import cagra
 
 import numpy as np
 import cupy as cp
+
 # import jax.numpy as jnp
 # from jax import jit, vmap
 
 from typing import Tuple, List, Any, Dict, cast
 from timeit import default_timer as timer
 import logging
+
+# On small batch sizes, using "multi_cta" algorithm is efficient
+cagra_index_params = cagra.IndexParams(graph_degree=32)
+cagra_search_params = cagra.SearchParams(algo="multi_cta")
+gpu_device_handle = DeviceResources()
 
 
 def get_top_k_embeddings(
@@ -56,9 +64,9 @@ def get_top_k_embeddings_gpu(
 ) -> Tuple[List[float], List]:
     """Get top nodes by similarity to the query."""
     # dimensions: D
-    qembed_cp = cp.array(query_embedding)
+    qembed_cp = cp.array(query_embedding, dtype=cp.float32)
     # dimensions: N x D
-    dembed_cp = cp.array(doc_embeddings)
+    dembed_cp = cp.array(doc_embeddings, dtype=cp.float32)
     # dimensions: N
     dproduct_arr = cp.dot(dembed_cp, qembed_cp)
     # dimensions: N
@@ -179,6 +187,28 @@ def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
     return result
 
 
+def ann_search_cagra(query: VectorStoreQuery, cagra_index, node_ids):
+    """ANN search with cagra."""
+    start = timer()
+    # dtype float64 not supported
+    query_embedding = cp.array([query.query_embedding], dtype=cp.float32)
+    distances, neighbors = cagra.search(
+        cagra_search_params,
+        cagra_index,
+        query_embedding,
+        query.similarity_top_k,
+        handle=gpu_device_handle,
+    )
+    # pylibraft functions are often asynchronous so the
+    # handle needs to be explicitly synchronized
+    gpu_device_handle.sync()
+    result_similarities = [1 - n for n in cp.asarray(distances)[0].tolist()]
+    result_ids = [node_ids[id] for id in cp.asarray(neighbors)[0].tolist()]
+    end = timer()
+    print(f"ann_search_cagra: {end - start}s")
+    return result_similarities, result_ids
+
+
 class MemoryVectorStore(VectorStore):
     """Simple custom Vector Store.
 
@@ -191,10 +221,22 @@ class MemoryVectorStore(VectorStore):
     def __init__(self) -> None:
         """Init params."""
         self.node_dict: Dict[str, BaseNode] = {}
+        # Maintain a list of node_ids in order for easy access
+        self.node_ids: List[str] = []
+
+    def update_index(self) -> None:
+        """Update index."""
+        docs_embeddings = [self.node_dict[id].embedding for id in self.node_ids]
+        docs_cp = cp.array(docs_embeddings, dtype=cp.float32)
+        self.cagra_index = cagra.build(
+            cagra_index_params,
+            docs_cp,
+            handle=gpu_device_handle,
+        )
 
     def get(self, text_id: str) -> List[float]:
         """Get embedding."""
-        return self.node_dict[text_id]
+        return self.node_dict[text_id].embedding
 
     def add(
         self,
@@ -203,6 +245,8 @@ class MemoryVectorStore(VectorStore):
         """Add nodes to index."""
         for node in nodes:
             self.node_dict[node.node_id] = node
+            self.node_ids.append(node.node_id)
+        self.update_index()
 
     def delete(self, node_id: str, **delete_kwargs: Any) -> None:
         """
@@ -212,7 +256,9 @@ class MemoryVectorStore(VectorStore):
             node_id: str
 
         """
+        self.node_ids.remove(node_id)
         del self.node_dict[node_id]
+        self.update_index()
 
     def query(
         self,
@@ -220,8 +266,11 @@ class MemoryVectorStore(VectorStore):
         **kwargs: Any,
     ) -> VectorStoreQueryResult:
         """Get nodes for response."""
-        # 1. First filter by metadata
         nodes = self.node_dict.values()
+        similarities, node_ids = ann_search_cagra(
+            query, self.cagra_index, self.node_ids
+        )
+        # 1. First filter by metadata
         if query.filters is not None:
             nodes = filter_nodes(nodes, query.filters)
         if len(nodes) == 0:

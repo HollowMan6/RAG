@@ -15,3 +15,6 @@ cupy-cuda12x
 # git reset --hard jax-v0.4.26
 # TEST_TMPDIR=/scratch/project_462000007/sonjiang/RAG-main/jax/.bazelcache python build/build.py --enable_rocm --rocm_path=/appl/lumi/SW/CrayEnv/EB/rocm/5.6.1 --bazel_options=--override_repository=xla=/scratch/project_462000007/sonjiang/RAG-main/jax/xla
 # pip install -e .
+
+# pip install pylibraft-cu12 --extra-index-url=https://pypi.nvidia.com
+# pip install raft-dask-cu12 --extra-index-url=https://pypi.nvidia.com
