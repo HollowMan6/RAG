@@ -156,7 +156,7 @@ def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
     doc_embeddings = [n.embedding for n in nodes]
     doc_ids = [n.node_id for n in nodes]
     start = timer()
-    get_top_k_embeddings(
+    result = get_top_k_embeddings(
         query_embedding,
         doc_embeddings,
         doc_ids,
@@ -165,7 +165,7 @@ def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
     end = timer()
     print(f"get_top_k_embeddings, CPU: {end - start}s")
     # start = timer()
-    # result = get_top_k_embeddings_accelerated(
+    # get_top_k_embeddings_accelerated(
     #     query_embedding,
     #     doc_embeddings,
     #     doc_ids,
@@ -174,7 +174,7 @@ def dense_search(query: VectorStoreQuery, nodes: List[BaseNode]):
     # end = timer()
     # print(f"Execution time for jax accelerated one is {end - start} seconds")
     start = timer()
-    result = get_top_k_embeddings_gpu(
+    get_top_k_embeddings_gpu(
         query_embedding,
         doc_embeddings,
         doc_ids,

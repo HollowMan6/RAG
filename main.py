@@ -4,12 +4,15 @@ from llama_index.core import VectorStoreIndex, PromptTemplate
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.indices.utils import embed_nodes
 
+from llama_index.retrievers.bm25 import BM25Retriever
+
 import logging
 from timeit import default_timer as timer
 
 import parsing
 import components
 import dbretriever
+import fusionretriever
 
 logging.basicConfig(level=logging.INFO)
 
@@ -48,7 +51,7 @@ def construct_index(md_dir_path, html_dir_path):
         components.vector_store, embed_model=components.embed_model
     )
 
-    return index
+    return index, results
 
 
 def generate_response(retrieved_nodes, query_str, qa_prompt, llm):
@@ -61,7 +64,7 @@ def generate_response(retrieved_nodes, query_str, qa_prompt, llm):
 
 
 if __name__ == "__main__":
-    index = construct_index("docs-data", "html-data")
+    index, nodes = construct_index("docs-data", "html-data")
 
     logging.info("Index generated successfully!")
 
@@ -85,10 +88,26 @@ Query: {query_str}
 Answer: \
 """
             )
-            retriever = dbretriever.VectorDBRetriever(
-                components.vector_store, components.embed_model
+
+            # TODO: Auto-Retriever
+            vector_retriever = dbretriever.VectorDBRetriever(
+                components.vector_store, components.embed_model, similarity_top_k=5
             )
-            retrieved_nodes = retriever.retrieve(question)
+            # vector_retrieved_nodes = vector_retriever.retrieve(question)
+
+            ## bm25 retriever
+            start = timer()
+            bm25_retriever = BM25Retriever.from_defaults(
+                nodes=nodes, similarity_top_k=5
+            )
+            end = timer()
+            logging.info(f"BM25 retriever initialization time: {end - start}s")
+
+            fusion_retriever = fusionretriever.FusionRetriever(
+                components.llm, [vector_retriever, bm25_retriever], similarity_top_k=5
+            )
+
+            retrieved_nodes = fusion_retriever.retrieve(question)
 
             print("\033[1;32;40m", end="")
             fmt_qa_prompt = generate_response(
