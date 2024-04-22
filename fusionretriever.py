@@ -4,7 +4,9 @@ from llama_index.core import QueryBundle, PromptTemplate
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import NodeWithScore
 from llama_index.postprocessor.rankgpt_rerank import RankGPTRerank
-# from tqdm.asyncio import tqdm
+
+from tqdm.asyncio import tqdm
+import asyncio
 
 import logging
 from timeit import default_timer as timer
@@ -25,29 +27,31 @@ def generate_queries(llm, query_str: str, num_queries: int = 4):
     return queries
 
 
-# async def run_queries(queries, retrievers):
+async def run_queries(queries, retrievers):
+    """Run queries against retrievers."""
+    tasks = []
+    for query in queries:
+        for i, retriever in enumerate(retrievers):
+            tasks.append(retriever.aretrieve(query))
+
+    task_results = await tqdm.gather(*tasks)
+
+    results_dict = {}
+    for i, (query, query_result) in enumerate(zip(queries, task_results)):
+        results_dict[(query, i)] = query_result
+
+    return results_dict
+
+
+# def run_queries(queries, retrievers):
 #     """Run queries against retrievers."""
-#     tasks = []
+#     results_dict = {}
 #     for query in queries:
 #         for i, retriever in enumerate(retrievers):
-#             tasks.append(retriever.aretrieve(query))
-
-#     task_results = await tqdm.gather(*tasks)
-
-#     results_dict = {}
-#     for i, (query, query_result) in enumerate(zip(queries, task_results)):
-#         results_dict[(query, i)] = query_result
+#             results_dict[(query, i)] = retriever.retrieve(query)
 
 #     return results_dict
 
-def run_queries(queries, retrievers):
-    """Run queries against retrievers."""
-    results_dict = {}
-    for query in queries:
-        for i, retriever in enumerate(retrievers):
-            results_dict[(query, i)] = retriever.retrieve(query)
-
-    return results_dict
 
 def fuse_results(results_dict, similarity_top_k: int = 5):
     """Fuse results."""
@@ -105,7 +109,7 @@ class FusionRetriever(BaseRetriever):
         logging.info(f"Generated queries: {queries}")
 
         start = timer()
-        results = run_queries(queries, self._retrievers)
+        results = asyncio.run(run_queries(queries, self._retrievers))
         end = timer()
         print(f"retrieve time for all the queries: {end - start}s")
 
