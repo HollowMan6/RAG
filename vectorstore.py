@@ -89,6 +89,7 @@ def get_top_k_embeddings_gpu(
 def get_top_k_jit(
     qembed_jax: jnp.ndarray,
     dembed_jax: jnp.ndarray,
+    similarity_top_k: int = 5,
 ):
     """Get top nodes by similarity to the query."""
 
@@ -108,9 +109,9 @@ def get_top_k_jit(
 
     # now we have the N cosine similarities for each document
     # sort by cosine similarity
-    sorted_indices = jnp.argsort(cos_sim_arr)[::-1]
+    top_k_indices = jnp.argsort(cos_sim_arr)[::-1][:similarity_top_k]
 
-    return sorted_indices, cos_sim_arr
+    return top_k_indices, cos_sim_arr[top_k_indices]
 
 
 def get_top_k_embeddings_accelerated(
@@ -127,21 +128,20 @@ def get_top_k_embeddings_accelerated(
     dembed_jax = jnp.array(doc_embeddings)
 
     start = timer()
-    sorted_indices, cos_sim_arr = jit(get_top_k_jit, backend="cpu")(
-        qembed_jax, dembed_jax
-    )
+    top_k_indices, result_similarities = jit(
+        get_top_k_jit, backend="cpu", static_argnames=["similarity_top_k"]
+    )(qembed_jax, dembed_jax, similarity_top_k)
     end = timer()
     print(f"Execution time for jax accelerated one on CPU is {end - start} seconds")
     start = timer()
-    sorted_indices, cos_sim_arr = jit(get_top_k_jit, backend="gpu")(
-        qembed_jax, dembed_jax
-    )
+    top_k_indices, result_similarities = jit(
+        get_top_k_jit, backend="gpu", static_argnames=["similarity_top_k"]
+    )(qembed_jax, dembed_jax, similarity_top_k)
     end = timer()
     print(f"Execution time for jax accelerated one on GPU is {end - start} seconds")
-    top_k_indices = sorted_indices[:similarity_top_k]
     result_ids = [doc_ids[i] for i in top_k_indices.tolist()]
 
-    return cos_sim_arr[top_k_indices].tolist(), result_ids
+    return result_similarities.tolist(), result_ids
 
 
 def filter_nodes(nodes: List[BaseNode], filters: MetadataFilters):
