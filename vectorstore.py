@@ -5,6 +5,7 @@ from llama_index.core.vector_stores import (
     MetadataFilters,
 )
 from llama_index.core.schema import BaseNode
+from fast_ivf import FastIVF, CompressedFastIVF, FastIVFPQ
 from pylibraft.common import DeviceResources
 from pylibraft.neighbors import cagra, hnsw, ivf_flat, ivf_pq
 from pylibraft.neighbors.brute_force import knn
@@ -225,6 +226,15 @@ def ann_search(query_embedding, similarity_top_k, index, params, node_ids, func,
     print(f"{name}: {end - start}s")
     return result_similarities, result_ids
 
+def fastann_search(index, query_embedding, similarity_top_k, node_ids, name):
+    """FastIVF ANN search."""
+    start = timer()
+    distances, indices = index.search(query_embedding, similarity_top_k)
+    result_similarities = [1 - n for n in distances]
+    result_ids = [node_ids[id] for id in indices[0]]
+    end = timer()
+    print(f"{name}: {end - start}s")
+    return result_similarities, result_ids
 
 class MemoryVectorStore(VectorStore):
     """Simple custom Vector Store.
@@ -240,20 +250,22 @@ class MemoryVectorStore(VectorStore):
         self.node_dict: Dict[str, BaseNode] = {}
         # Maintain a list of node_ids in order for easy access
         self.node_ids: List[str] = []
+        self.nlist = 128
         self.hnsw_search_params = hnsw.SearchParams(ef=20, num_threads=20)
         # On small batch sizes, using "multi_cta" algorithm is efficient
         self.cagra_index_params = cagra.IndexParams(graph_degree=32)
         self.cagra_search_params = cagra.SearchParams(algo="multi_cta")
         self.ivf_flat_index_params = ivf_flat.IndexParams(
-            n_lists=128, metric="sqeuclidean"
+            n_lists=self.nlist, metric="sqeuclidean"
         )
         self.ivf_flat_search_params = ivf_flat.SearchParams()
-        self.ivf_pq_index_params = ivf_pq.IndexParams(n_lists=128, metric="sqeuclidean")
+        self.ivf_pq_index_params = ivf_pq.IndexParams(n_lists=self.nlist, metric="sqeuclidean")
         self.ivf_pq_search_params = ivf_pq.SearchParams()
 
     def update_index(self) -> None:
         """Update index."""
         docs_embeddings = [self.node_dict[id].embedding for id in self.node_ids]
+        docs_np = np.array(docs_embeddings, dtype=np.float32)
         docs_cp = cp.array(docs_embeddings, dtype=cp.float32)
         self.cagra_index = cagra.build(
             self.cagra_index_params,
@@ -267,6 +279,12 @@ class MemoryVectorStore(VectorStore):
         self.ivf_pq_index = ivf_pq.build(
             self.ivf_pq_index_params, docs_cp, handle=gpu_device_handle
         )
+        self.fastivf = FastIVF(docs_np.shape[1], nlist=self.nlist)
+        self.fastivf.train(docs_np)
+        self.compress_fastivf = CompressedFastIVF(docs_np.shape[1], nlist=self.nlist, compression_ndim=docs_np.shape[1]//16)
+        self.compress_fastivf.train(docs_np)
+        self.fastivf_pq = FastIVFPQ(docs_np.shape[1], nlist=self.nlist)
+        self.fastivf_pq.train(docs_np)
 
     def get(self, text_id: str) -> List[float]:
         """Get embedding."""
@@ -330,14 +348,36 @@ class MemoryVectorStore(VectorStore):
             ivf_pq.search,
             "ivf_pq, GPU",
         )
+        query_np = np.array([query.query_embedding], dtype=np.float32)
         similarities, node_ids = ann_search(
-            np.array([query.query_embedding], dtype=np.float32),
+            query_np,
             query.similarity_top_k,
             self.hnsw_index,
             self.hnsw_search_params,
             self.node_ids,
             hnsw.search,
             "hnsw, CPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.fastivf,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Fast IVF Numba, CPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.compress_fastivf,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Compressed Fast IVF PQ Numba, CPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.fastivf_pq,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Fast IVF PQ Numba, CPU",
         )
         # 1. First filter by metadata
         if query.filters is not None:
