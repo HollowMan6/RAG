@@ -9,6 +9,7 @@ from fast_ivf import FastIVF, CompressedFastIVF, FastIVFPQ
 from pylibraft.common import DeviceResources
 from pylibraft.neighbors import cagra, hnsw, ivf_flat, ivf_pq
 from pylibraft.neighbors.brute_force import knn
+import faiss
 
 import numpy as np
 import cupy as cp
@@ -279,12 +280,27 @@ class MemoryVectorStore(VectorStore):
         self.ivf_pq_index = ivf_pq.build(
             self.ivf_pq_index_params, docs_cp, handle=gpu_device_handle
         )
-        self.fastivf = FastIVF(docs_np.shape[1], nlist=self.nlist)
+        dim = docs_np.shape[1]
+        self.fastivf = FastIVF(dim, nlist=self.nlist)
         self.fastivf.train(docs_np)
-        self.compress_fastivf = CompressedFastIVF(docs_np.shape[1], nlist=self.nlist, compression_ndim=docs_np.shape[1]//16)
+        self.compress_fastivf = CompressedFastIVF(dim, nlist=self.nlist, compression_ndim=dim//16)
         self.compress_fastivf.train(docs_np)
-        self.fastivf_pq = FastIVFPQ(docs_np.shape[1], nlist=self.nlist)
+        self.fastivf_pq = FastIVFPQ(dim, nlist=self.nlist)
         self.fastivf_pq.train(docs_np)
+        faissflatip = faiss.IndexFlatIP(dim)
+        self.faissivf = faiss.IndexIVFFlat(faissflatip, dim, self.nlist, faiss.METRIC_INNER_PRODUCT)
+        self.faissivf.train(docs_np)
+        self.faissivf.add(docs_np)
+        self.faissivfpq = faiss.IndexIVFPQ(faissflatip, dim, self.nlist, 16, 6)
+        self.faissivfpq.train(docs_np)
+        self.faissivfpq.add(docs_np)
+        self.faisshnsw = faiss.IndexHNSWFlat(dim, 32)
+        self.faisshnsw.hnsw.efConstruction = 10
+        self.faisshnsw.hnsw.efSearch = 20
+        self.faisshnsw.add(docs_np)
+        self.faissgpuivf = faiss.index_cpu_to_all_gpus(self.faissivf)
+        self.faissgpuivfpq = faiss.index_cpu_to_all_gpus(self.faissivfpq)
+        self.faissgpuhnsw = faiss.index_cpu_to_all_gpus(self.faisshnsw)
 
     def get(self, text_id: str) -> List[float]:
         """Get embedding."""
@@ -378,6 +394,48 @@ class MemoryVectorStore(VectorStore):
             query.similarity_top_k,
             self.node_ids,
             "Fast IVF PQ Numba, CPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.faisshnsw,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Faiss HNSW, CPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.faissivf,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Faiss IVF Flat, CPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.faissivfpq,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Faiss IVF PQ, CPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.faissgpuhnsw,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Faiss HNSW, GPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.faissgpuivf,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Faiss IVF Flat, GPU",
+        )
+        similarities, node_ids = fastann_search(
+            self.faissgpuivfpq,
+            query_np,
+            query.similarity_top_k,
+            self.node_ids,
+            "Faiss IVF PQ, GPU",
         )
         # 1. First filter by metadata
         if query.filters is not None:
