@@ -1,0 +1,16 @@
+{
+    "total_runtime": 2.2945971488952637,
+    "num_documents": 738,
+    "input_load_time": 0,
+    "workflows": {
+        "create_base_text_units": {
+            "overall": 0.6212058067321777,
+            "0_create_base_text_units": 0.6203420162200928
+        },
+        "create_base_extracted_entities": {
+            "overall": 1.4894890785217285,
+            "0_entity_extract": 1.0980379581451416,
+            "1_merge_graphs": 0.39047694206237793
+        }
+    }
+}
